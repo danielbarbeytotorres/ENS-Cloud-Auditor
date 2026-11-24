@@ -1,0 +1,113 @@
+{
+  "metadata": {
+    "framework": "Esquema Nacional de Seguridad (RD 311/2022) & ISO/IEC 27001:2022",
+    "version": "1.0.0",
+    "scope": "AWS Cloud Infrastructure"
+  },
+  "controls": [
+    {
+      "id": "ENS-S3-01",
+      "ens_code": "op.acc.1 / mp.info.1",
+      "ens_domain": "Marco Operacional - Control de Acceso",
+      "iso_27001": "A.5.15 / A.8.3",
+      "title": "Bloqueo de acceso público en buckets S3",
+      "description": "Todos los buckets S3 deben tener habilitado el bloqueo de acceso público (Block Public Access) para evitar exposiciones no autorizadas de información.",
+      "aws_service": "S3",
+      "severity": "ALTA",
+      "weight": 15,
+      "remediation_text": "Activar las cuatro opciones de 'Block Public Access' a nivel de bucket o de cuenta en AWS S3.",
+      "remediation_cli": "aws s3api put-public-access-block --bucket <BUCKET_NAME> --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+    },
+    {
+      "id": "ENS-S3-02",
+      "ens_code": "mp.info.3",
+      "ens_domain": "Medidas de Protección - Protección de la Información",
+      "iso_27001": "A.8.24",
+      "title": "Cifrado en reposo habilitado en buckets S3",
+      "description": "La información almacenada en buckets S3 debe estar cifrada por defecto (SSE-S3 o SSE-KMS) para garantizar su confidencialidad.",
+      "aws_service": "S3",
+      "severity": "MEDIA",
+      "weight": 10,
+      "remediation_text": "Configurar cifrado por defecto del lado del servidor (AES256 o aws:kms) en el bucket.",
+      "remediation_cli": "aws s3api put-bucket-encryption --bucket <BUCKET_NAME> --server-side-encryption-configuration '{\"Rules\":[{\"ApplyServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]}'"
+    },
+    {
+      "id": "ENS-IAM-01",
+      "ens_code": "op.acc.5",
+      "ens_domain": "Marco Operacional - Control de Acceso",
+      "iso_27001": "A.8.5",
+      "title": "MFA activado en la cuenta Root",
+      "description": "La cuenta raíz de AWS debe disponer obligatoriamente de autenticación multifactor (MFA) hardware o virtual.",
+      "aws_service": "IAM",
+      "severity": "ALTA",
+      "weight": 20,
+      "remediation_text": "Acceder a la consola de IAM con la cuenta Root y asignar un dispositivo MFA en 'Credenciales de seguridad'.",
+      "remediation_cli": "# Requiere configuración inicial en consola AWS IAM -> Security Credentials -> Assign MFA device"
+    },
+    {
+      "id": "ENS-IAM-02",
+      "ens_code": "op.acc.5",
+      "ens_domain": "Marco Operacional - Control de Acceso",
+      "iso_27001": "A.5.17",
+      "title": "Política de contraseñas robusta en IAM",
+      "description": "La política de contraseñas debe exigir al menos 14 caracteres, combinando mayúsculas, minúsculas, números y símbolos.",
+      "aws_service": "IAM",
+      "severity": "MEDIA",
+      "weight": 10,
+      "remediation_text": "Actualizar la política de contraseñas de la cuenta en IAM para cumplir los requisitos mínimos de complejidad y longitud.",
+      "remediation_cli": "aws iam update-account-password-policy --minimum-password-length 14 --require-symbols --require-numbers --require-uppercase-characters --require-lowercase-characters --allow-users-to-change-password"
+    },
+    {
+      "id": "ENS-IAM-03",
+      "ens_code": "op.acc.4",
+      "ens_domain": "Marco Operacional - Control de Acceso",
+      "iso_27001": "A.8.2",
+      "title": "Principio de mínimo privilegio (sin políticas '*:*')",
+      "description": "No deben existir políticas gestionadas por el cliente que otorguen permisos totales ('Action': '*', 'Resource': '*') a usuarios o roles.",
+      "aws_service": "IAM",
+      "severity": "ALTA",
+      "weight": 15,
+      "remediation_text": "Revisar y restringir las políticas IAM con comodines totales aplicando el principio de mínimo privilegio.",
+      "remediation_cli": "aws iam detach-user-policy --user-name <USER_NAME> --policy-arn <POLICY_ARN>"
+    },
+    {
+      "id": "ENS-CT-01",
+      "ens_code": "op.exp.8",
+      "ens_domain": "Marco Operacional - Explotación",
+      "iso_27001": "A.8.15",
+      "title": "Registro de actividad (CloudTrail) activo y multirregión",
+      "description": "Debe existir al menos un Trail activo en AWS CloudTrail registrando eventos de gestión en todas las regiones para garantizar la trazabilidad.",
+      "aws_service": "CloudTrail",
+      "severity": "ALTA",
+      "weight": 15,
+      "remediation_text": "Crear o activar un Trail multirregión en AWS CloudTrail con validación de archivos de registro habilitada.",
+      "remediation_cli": "aws cloudtrail create-trail --name ens-audit-trail --s3-bucket-name <AUDIT_BUCKET> --is-multi-region-trail --enable-log-file-validation && aws cloudtrail start-logging --name ens-audit-trail"
+    },
+    {
+      "id": "ENS-VPC-01",
+      "ens_code": "mp.com.1 / mp.com.2",
+      "ens_domain": "Medidas de Protección - Comunicaciones",
+      "iso_27001": "A.8.20",
+      "title": "Security Groups sin puertos críticos (22/3389) abiertos a Internet",
+      "description": "Los puertos de administración remota (SSH 22 y RDP 3389) no deben estar expuestos a 0.0.0.0/0 ni ::/0.",
+      "aws_service": "VPC",
+      "severity": "ALTA",
+      "weight": 10,
+      "remediation_text": "Revocar las reglas de entrada abiertas a 0.0.0.0/0 en los puertos 22 y 3389 y restringir el origen a IPs corporativas o VPN/Bastion.",
+      "remediation_cli": "aws ec2 revoke-security-group-ingress --group-id <SG_ID> --protocol tcp --port 22 --cidr 0.0.0.0/0"
+    },
+    {
+      "id": "ENS-EBS-01",
+      "ens_code": "mp.info.3",
+      "ens_domain": "Medidas de Protección - Protección de la Información",
+      "iso_27001": "A.8.24",
+      "title": "Cifrado por defecto habilitado en volúmenes EBS",
+      "description": "El cifrado automático de nuevos volúmenes EBS debe estar activado a nivel de región para proteger los discos de instancias EC2.",
+      "aws_service": "EC2",
+      "severity": "BAJA",
+      "weight": 5,
+      "remediation_text": "Habilitar la opción 'EBS encryption by default' en la configuración de la región de EC2.",
+      "remediation_cli": "aws ec2 enable-ebs-encryption-by-default"
+    }
+  ]
+}
