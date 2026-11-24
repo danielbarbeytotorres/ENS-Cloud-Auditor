@@ -1,0 +1,36 @@
+name: ENS Compliance-as-Code Gate
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  ens-audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ejecutar ENS-Cloud-Auditor (Modo Simulación)
+        run: |
+          python -m src.main --mock --threshold 80
+
+      - name: Subir Informes de Auditoría (HTML, CSV, JSON)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ens-audit-reports
+          path: output/
