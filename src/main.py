@@ -2,6 +2,7 @@ import argparse
 import sys
 from colorama import Fore, Style, init
 from src.engine import run_audit
+from src.reporter import generate_reports
 
 init(autoreset=True)
 
@@ -24,6 +25,7 @@ def main():
     print(f"Modo: {Fore.YELLOW}{'MOCK' if args.mock else 'AWS LIVE'}{Style.RESET_ALL} | Región: {args.region}\n")
 
     report = run_audit(mock=args.mock, profile=args.profile, region=args.region)
+    html_path, csv_path = generate_reports(report)
 
     for f in report["findings"]:
         if f["status"] == "PASS":
@@ -44,6 +46,8 @@ def main():
     print(f"Puntuación de Cumplimiento ENS: {score_color}{Style.BRIGHT}{s['compliance_score']}%{Style.RESET_ALL} (Umbral: {args.threshold}%)")
     print(f"Controles: {Fore.GREEN}{s['passed']} PASS{Style.RESET_ALL} | {Fore.RED}{s['failed']} FAIL{Style.RESET_ALL} | {Fore.YELLOW}{s['errors']} ERROR{Style.RESET_ALL}")
     print(f"Resultados guardados en: {Fore.CYAN}output/audit_results.json{Style.RESET_ALL}")
+    print(f"Informe Ejecutivo HTML: {Fore.CYAN}{html_path}{Style.RESET_ALL}")
+    print(f"Exportación CSV:        {Fore.CYAN}{csv_path}{Style.RESET_ALL}")
     print("-" * 60)
 
     if s["compliance_score"] < args.threshold:

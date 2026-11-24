@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Informe de Auditoría ENS - AWS Cloud</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg: #f4f6f9;
+            --card: #ffffff;
+            --text: #1e293b;
+            --muted: #64748b;
+            --primary: #0f172a;
+            --accent: #2563eb;
+            --pass: #16a34a;
+            --fail: #dc2626;
+            --err: #d97706;
+            --border: #e2e8f0;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; padding: 2rem; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        header { background: var(--primary); color: #fff; padding: 2rem; border-radius: 12px; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; }
+        header h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+        header p { color: #94a3b8; font-size: 0.9rem; }
+        .meta-badge { background: rgba(255,255,255,0.1); padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.85rem; }
+        .grid-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .kpi-label { font-size: 0.85rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .kpi-value { font-size: 2rem; font-weight: 700; margin-top: 0.25rem; }
+        .score-ok { color: var(--pass); }
+        .score-ko { color: var(--fail); }
+        .charts-row { display: grid; grid-template-columns: 1fr 2fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+        @media (max-width: 768px) { .charts-row { grid-template-columns: 1fr; } }
+        .chart-box { height: 260px; display: flex; align-items: center; justify-content: center; }
+        h2 { font-size: 1.2rem; margin-bottom: 1rem; color: var(--primary); }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th, td { text-align: left; padding: 0.85rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+        th { background: #f8fafc; color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+        .badge { display: inline-block; padding: 0.25rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; }
+        .badge-PASS { background: #dcfce7; color: var(--pass); }
+        .badge-FAIL { background: #fee2e2; color: var(--fail); }
+        .badge-ERROR { background: #fef3c7; color: var(--err); }
+        .sev-ALTA { color: var(--fail); font-weight: 700; }
+        .sev-MEDIA { color: var(--err); font-weight: 700; }
+        .sev-BAJA { color: var(--accent); font-weight: 700; }
+        .cli-box { background: #0f172a; color: #38bdf8; padding: 0.6rem; border-radius: 6px; font-family: Consolas, monospace; font-size: 0.78rem; margin-top: 0.5rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+        .resources { font-size: 0.8rem; color: var(--fail); margin-top: 0.3rem; font-weight: 600; }
+        footer { text-align: center; color: var(--muted); font-size: 0.8rem; margin-top: 2rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>Informe Ejecutivo de Cumplimiento ENS</h1>
+                <p>{{ report.metadata.framework }} | Alcance: {{ report.metadata.scope }}</p>
+            </div>
+            <div class="meta-badge">
+                <strong>Modo:</strong> {{ report.mode }}<br>
+                <strong>Fecha:</strong> {{ report.timestamp }}
+            </div>
+        </header>
+
+        <div class="grid-kpi">
+            <div class="card">
+                <div class="kpi-label">Cumplimiento Global</div>
+                <div class="kpi-value {{ 'score-ok' if report.summary.compliance_score >= 80 else 'score-ko' }}">
+                    {{ report.summary.compliance_score }}%
+                </div>
+            </div>
+            <div class="card">
+                <div class="kpi-label">Controles Superados</div>
+                <div class="kpi-value" style="color: var(--pass);">{{ report.summary.passed }}</div>
+            </div>
+            <div class="card">
+                <div class="kpi-label">No Conformidades (FAIL)</div>
+                <div class="kpi-value" style="color: var(--fail);">{{ report.summary.failed }}</div>
+            </div>
+            <div class="card">
+                <div class="kpi-label">Total Evaluados</div>
+                <div class="kpi-value">{{ report.summary.total_controls }}</div>
+            </div>
+        </div>
+
+        <div class="charts-row">
+            <div class="card">
+                <h2>Estado de Controles</h2>
+                <div class="chart-box">
+                    <canvas id="statusChart"></canvas>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Resumen Ejecutivo</h2>
+                <p style="margin-bottom: 1rem; color: var(--muted);">
+                    Esta auditoría automatizada evalúa la infraestructura de AWS frente a los controles técnicos clave del
+                    <strong>Esquema Nacional de Seguridad (Real Decreto 311/2022)</strong> y su equivalencia en <strong>ISO/IEC 27001:2022</strong>.
+                </p>
+                <p>
+                    {% if report.summary.compliance_score >= 80 %}
+                        El entorno alcanza un nivel de cumplimiento <strong>satisfactorio (≥ 80%)</strong>. Se recomienda mantener la monitorización continua y revisar las observaciones menores.
+                    {% else %}
+                        El entorno se encuentra <strong>por debajo del umbral mínimo exigido (80%)</strong>. Existen no conformidades críticas que deben remediarse de forma prioritaria siguiendo el plan de acción inferior.
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Detalle de Hallazgos y Plan de Remediación</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Estado</th>
+                        <th>Control / Normativa</th>
+                        <th>Severidad</th>
+                        <th>Detalle y Remediación</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for f in report.findings %}
+                    <tr>
+                        <td><span class="badge badge-{{ f.status }}">{{ f.status }}</span></td>
+                        <td>
+                            <strong>{{ f.id }}</strong> - {{ f.title }}<br>
+                            <small style="color: var(--muted);">ENS: {{ f.ens_code }} | ISO: {{ f.iso_27001 }}</small>
+                        </td>
+                        <td><span class="sev-{{ f.severity }}">{{ f.severity }}</span><br><small>({{ f.weight }} pts)</small></td>
+                        <td>
+                            <div>{{ f.details }}</div>
+                            {% if f.affected_resources %}
+                                <div class="resources">Recursos afectados: {{ f.affected_resources | join(', ') }}</div>
+                            {% endif %}
+                            {% if f.status != 'PASS' %}
+                                <div style="margin-top: 0.4rem; font-size: 0.85rem;"><strong>Acción:</strong> {{ f.remediation_text }}</div>
+                                <div class="cli-box">{{ f.remediation_cli }}</div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <footer>
+            Generado automáticamente por ENS-Cloud-Auditor | Compliance-as-Code Framework
+        </footer>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('statusChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['PASS', 'FAIL', 'ERROR'],
+                datasets: [{
+                    data: [{{ report.summary.passed }}, {{ report.summary.failed }}, {{ report.summary.errors }}],
+                    backgroundColor: ['#16a34a', '#dc2626', '#d97706'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom' } }
+            }
+        });
+    </script>
+</body>
+</html>
