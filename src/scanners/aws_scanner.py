@@ -123,18 +123,25 @@ def run_aws_scan(profile=None, region="eu-west-1"):
                 "affected_resources": ["IAM-Password-Policy"]
             }
 
-        # Overly permissive policies (*:*)
+        # Overly permissive policies (*:*) con paginación y soporte para listas
         risky_policies = []
-        policies = iam.list_policies(Scope="Local").get("Policies", [])
-        for p in policies:
-            ver = iam.get_policy_version(PolicyArn=p["Arn"], VersionId=p["DefaultVersionId"])
-            stmts = ver["PolicyVersion"]["Document"].get("Statement", [])
-            if isinstance(stmts, dict):
-                stmts = [stmts]
-            for s in stmts:
-                if s.get("Effect") == "Allow" and s.get("Action") == "*" and s.get("Resource") == "*":
-                    risky_policies.append(p["PolicyName"])
-                    break
+        paginator = iam.get_paginator("list_policies")
+        for page in paginator.paginate(Scope="Local"):
+            for p in page.get("Policies", []):
+                ver = iam.get_policy_version(PolicyArn=p["Arn"], VersionId=p["DefaultVersionId"])
+                stmts = ver["PolicyVersion"]["Document"].get("Statement", [])
+                if isinstance(stmts, dict):
+                    stmts = [stmts]
+                for s in stmts:
+                    actions = s.get("Action", [])
+                    resources = s.get("Resource", [])
+                    if isinstance(actions, str):
+                        actions = [actions]
+                    if isinstance(resources, str):
+                        resources = [resources]
+                    if s.get("Effect") == "Allow" and "*" in actions and "*" in resources:
+                        risky_policies.append(p["PolicyName"])
+                        break
 
         results["ENS-IAM-03"] = {
             "status": "FAIL" if risky_policies else "PASS",
@@ -164,17 +171,22 @@ def run_aws_scan(profile=None, region="eu-west-1"):
     except (ClientError, NoCredentialsError) as e:
         results["ENS-CT-01"] = {"status": "ERROR", "details": str(e), "affected_resources": []}
 
-    # 4. VPC Security Groups Check (ENS-VPC-01)
+    # 4. VPC Security Groups Check (ENS-VPC-01) con paginación y protocolo "-1"
     try:
         ec2 = session.client("ec2")
-        sgs = ec2.describe_security_groups().get("SecurityGroups", [])
         exposed_sgs = []
-        for sg in sgs:
-            for perm in sg.get("IpPermissions", []):
-                from_p = perm.get("FromPort")
-                to_p = perm.get("ToPort")
-                if from_p is not None and to_p is not None:
-                    if (from_p <= 22 <= to_p) or (from_p <= 3389 <= to_p):
+        paginator = ec2.get_paginator("describe_security_groups")
+        for page in paginator.paginate():
+            for sg in page.get("SecurityGroups", []):
+                for perm in sg.get("IpPermissions", []):
+                    proto = perm.get("IpProtocol")
+                    from_p = perm.get("FromPort")
+                    to_p = perm.get("ToPort")
+                    is_risky_port = (
+                        proto == "-1"
+                        or (from_p is not None and to_p is not None and ((from_p <= 22 <= to_p) or (from_p <= 3389 <= to_p)))
+                    )
+                    if is_risky_port:
                         cidrs = [r.get("CidrIp") for r in perm.get("IpRanges", [])]
                         cidrs_v6 = [r.get("CidrIpv6") for r in perm.get("Ipv6Ranges", [])]
                         if "0.0.0.0/0" in cidrs or "::/0" in cidrs_v6:
@@ -182,7 +194,7 @@ def run_aws_scan(profile=None, region="eu-west-1"):
                             break
         results["ENS-VPC-01"] = {
             "status": "FAIL" if exposed_sgs else "PASS",
-            "details": f"{len(exposed_sgs)} Security Group(s) con SSH/RDP expuesto a Internet." if exposed_sgs else "Sin puertos críticos expuestos a Internet.",
+            "details": f"{len(exposed_sgs)} Security Group(s) con SSH/RDP o todo el tráfico expuesto a Internet." if exposed_sgs else "Sin puertos críticos expuestos a Internet.",
             "affected_resources": exposed_sgs
         }
 

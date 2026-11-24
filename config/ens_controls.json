@@ -7,7 +7,7 @@
   "controls": [
     {
       "id": "ENS-S3-01",
-      "ens_code": "op.acc.1 / mp.info.1",
+      "ens_code": "op.acc.2 / mp.info.1",
       "ens_domain": "Marco Operacional - Control de Acceso",
       "iso_27001": "A.5.15 / A.8.3",
       "title": "Bloqueo de acceso público en buckets S3",
@@ -85,7 +85,7 @@
     },
     {
       "id": "ENS-VPC-01",
-      "ens_code": "mp.com.1 / mp.com.2",
+      "ens_code": "mp.com.1",
       "ens_domain": "Medidas de Protección - Comunicaciones",
       "iso_27001": "A.8.20",
       "title": "Security Groups sin puertos críticos (22/3389) abiertos a Internet",

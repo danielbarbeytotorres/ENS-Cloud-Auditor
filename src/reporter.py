@@ -6,9 +6,8 @@ TEMPLATES_DIR = Path("templates")
 HTML_OUTPUT_PATH = Path("output/audit_report.html")
 CSV_OUTPUT_PATH = Path("output/audit_report.csv")
 
-
 def generate_html_report(report):
-    env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
+    env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=True)
     template = env.get_template("report_template.html")
     html_content = template.render(report=report)
 
@@ -51,3 +50,5 @@ def generate_reports(report):
     html_path = generate_html_report(report)
     csv_path = generate_csv_report(report)
     return html_path, csv_path
+
+    

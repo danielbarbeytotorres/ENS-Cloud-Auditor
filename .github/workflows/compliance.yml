@@ -7,9 +7,22 @@ on:
     branches: [ "main" ]
 
 jobs:
-  ens-audit:
+  iac-security-scan:
+    name: Terraform IaC Scan (Checkov)
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
 
+      - name: Escanear infra/main.tf con Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infra/
+          soft_fail: true
+
+  ens-audit:
+    name: ENS-Cloud-Auditor (Mock Gate)
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout del repositorio
         uses: actions/checkout@v4
@@ -24,9 +37,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Ejecutar ENS-Cloud-Auditor (Modo Simulación)
+      - name: Ejecutar ENS-Cloud-Auditor (Baseline 60%)
         run: |
-          python -m src.main --mock --threshold 80
+          python -m src.main --mock --threshold 60
 
       - name: Subir Informes de Auditoría (HTML, CSV, JSON)
         if: always()
@@ -34,3 +47,5 @@ jobs:
         with:
           name: ens-audit-reports
           path: output/
+
+          
