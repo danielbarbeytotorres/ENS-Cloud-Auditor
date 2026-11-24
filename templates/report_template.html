@@ -27,11 +27,12 @@
         .meta-badge { background: rgba(255,255,255,0.1); padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.85rem; }
         .grid-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
         .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .section-gap { margin-bottom: 1.5rem; }
         .kpi-label { font-size: 0.85rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
         .kpi-value { font-size: 2rem; font-weight: 700; margin-top: 0.25rem; }
         .score-ok { color: var(--pass); }
         .score-ko { color: var(--fail); }
-        .charts-row { display: grid; grid-template-columns: 1fr 2fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+        .charts-row { display: grid; grid-template-columns: 1fr 1.6fr; gap: 1.5rem; margin-bottom: 1.5rem; }
         @media (max-width: 768px) { .charts-row { grid-template-columns: 1fr; } }
         .chart-box { height: 260px; display: flex; align-items: center; justify-content: center; }
         h2 { font-size: 1.2rem; margin-bottom: 1rem; color: var(--primary); }
@@ -92,19 +93,26 @@
                 </div>
             </div>
             <div class="card">
-                <h2>Resumen Ejecutivo</h2>
-                <p style="margin-bottom: 1rem; color: var(--muted);">
-                    Esta auditoría automatizada evalúa la infraestructura de AWS frente a los controles técnicos clave del
-                    <strong>Esquema Nacional de Seguridad (Real Decreto 311/2022)</strong> y su equivalencia en <strong>ISO/IEC 27001:2022</strong>.
-                </p>
-                <p>
-                    {% if report.summary.compliance_score >= 80 %}
-                        El entorno alcanza un nivel de cumplimiento <strong>satisfactorio (≥ 80%)</strong>. Se recomienda mantener la monitorización continua y revisar las observaciones menores.
-                    {% else %}
-                        El entorno se encuentra <strong>por debajo del umbral mínimo exigido (80%)</strong>. Existen no conformidades críticas que deben remediarse de forma prioritaria siguiendo el plan de acción inferior.
-                    {% endif %}
-                </p>
+                <h2>Cumplimiento por Dominio ENS (%)</h2>
+                <div class="chart-box">
+                    <canvas id="domainChart"></canvas>
+                </div>
             </div>
+        </div>
+
+        <div class="card section-gap">
+            <h2>Resumen Ejecutivo</h2>
+            <p style="margin-bottom: 0.75rem; color: var(--muted);">
+                Esta auditoría automatizada evalúa la infraestructura de AWS frente a los controles técnicos clave del
+                <strong>Esquema Nacional de Seguridad (Real Decreto 311/2022)</strong> y su equivalencia en <strong>ISO/IEC 27001:2022</strong>.
+            </p>
+            <p>
+                {% if report.summary.compliance_score >= 80 %}
+                    El entorno alcanza un nivel de cumplimiento <strong>satisfactorio (≥ 80%)</strong>. Se recomienda mantener la monitorización continua y revisar las observaciones menores.
+                {% else %}
+                    El entorno se encuentra <strong>por debajo del umbral mínimo exigido (80%)</strong>. Existen no conformidades críticas que deben remediarse de forma prioritaria siguiendo el plan de acción inferior.
+                {% endif %}
+            </p>
         </div>
 
         <div class="card">
@@ -149,8 +157,8 @@
     </div>
 
     <script>
-        const ctx = document.getElementById('statusChart').getContext('2d');
-        new Chart(ctx, {
+        const statusCtx = document.getElementById('statusChart').getContext('2d');
+        new Chart(statusCtx, {
             type: 'doughnut',
             data: {
                 labels: ['PASS', 'FAIL', 'ERROR'],
@@ -164,6 +172,48 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: { legend: { position: 'bottom' } }
+            }
+        });
+
+        const domainData = {{ report.domain_summary | tojson }};
+        const domainCtx = document.getElementById('domainChart').getContext('2d');
+        new Chart(domainCtx, {
+            type: 'bar',
+            data: {
+                labels: domainData.map(d => d.label),
+                datasets: [{
+                    label: 'Cumplimiento (%)',
+                    data: domainData.map(d => d.score),
+                    backgroundColor: domainData.map(d =>
+                        d.score >= 80 ? '#16a34a' : (d.score >= 50 ? '#d97706' : '#dc2626')
+                    ),
+                    borderRadius: 6,
+                    barThickness: 26
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        min: 0,
+                        max: 100,
+                        ticks: { callback: value => value + '%' }
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: items => domainData[items[0].dataIndex].domain,
+                            label: item => {
+                                const d = domainData[item.dataIndex];
+                                return ` ${d.score}% (${d.passed}/${d.total} controles PASS)`;
+                            }
+                        }
+                    }
+                }
             }
         });
     </script>

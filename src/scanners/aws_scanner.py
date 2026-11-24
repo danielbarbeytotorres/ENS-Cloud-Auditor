@@ -12,12 +12,12 @@ def run_mock_scan():
         },
         "ENS-S3-02": {
             "status": "PASS",
-            "details": "Todos los buckets tienen cifrado por defecto habilitado.",
+            "details": "Todos los buckets S3 utilizan cifrado con AWS KMS.",
             "affected_resources": []
         },
         "ENS-IAM-01": {
             "status": "PASS",
-            "details": "La cuenta Root dispone de MFA activo.",
+            "details": "MFA activado en la cuenta Root y en todos los usuarios IAM con acceso a consola.",
             "affected_resources": []
         },
         "ENS-IAM-02": {
@@ -27,7 +27,7 @@ def run_mock_scan():
         },
         "ENS-IAM-03": {
             "status": "PASS",
-            "details": "No se detectaron políticas gestionadas con permisos '*:*'.",
+            "details": "Sin políticas gestionadas ni inline con permisos totales '*:*'.",
             "affected_resources": []
         },
         "ENS-CT-01": {
@@ -48,42 +48,79 @@ def run_mock_scan():
     }
 
 
+def _has_wildcard_admin(policy_doc):
+    """Devuelve True si una política IAM permite Action '*' sobre Resource '*'."""
+    stmts = policy_doc.get("Statement", [])
+    if isinstance(stmts, dict):
+        stmts = [stmts]
+    for s in stmts:
+        actions = s.get("Action", [])
+        resources = s.get("Resource", [])
+        if isinstance(actions, str):
+            actions = [actions]
+        if isinstance(resources, str):
+            resources = [resources]
+        if s.get("Effect") == "Allow" and "*" in actions and "*" in resources:
+            return True
+    return False
+
+
 def run_aws_scan(profile=None, region="eu-west-1"):
     """Ejecuta los checks reales contra AWS usando boto3."""
     session = boto3.Session(profile_name=profile, region_name=region)
     results = {}
 
-    # 1. S3 Checks (ENS-S3-01 y ENS-S3-02)
+    # 1. S3 Checks (ENS-S3-01 y ENS-S3-02) con paginación
     try:
         s3 = session.client("s3")
-        buckets = [b["Name"] for b in s3.list_buckets().get("Buckets", [])]
+        s3_paginator = s3.get_paginator("list_buckets")
+        buckets = [
+            b["Name"]
+            for page in s3_paginator.paginate()
+            for b in page.get("Buckets", [])
+        ]
         public_buckets = []
-        unencrypted_buckets = []
+        non_kms_buckets = []
 
         for bucket in buckets:
-            # Block Public Access
+            # ENS-S3-01: Block Public Access
             try:
                 pab = s3.get_public_access_block(Bucket=bucket)["PublicAccessBlockConfiguration"]
-                if not all(pab.values()):
+                if len(pab) < 4 or not all(pab.values()):
                     public_buckets.append(bucket)
             except ClientError:
                 public_buckets.append(bucket)
 
-            # Encryption
+            # ENS-S3-02: Cifrado gestionado con AWS KMS
             try:
-                s3.get_bucket_encryption(Bucket=bucket)
+                enc = s3.get_bucket_encryption(Bucket=bucket)
+                rules = enc.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
+                uses_kms = any(
+                    r.get("ApplyServerSideEncryptionByDefault", {}).get("SSEAlgorithm") in ("aws:kms", "aws:kms:dsse")
+                    for r in rules
+                )
+                if not uses_kms:
+                    non_kms_buckets.append(bucket)
             except ClientError:
-                unencrypted_buckets.append(bucket)
+                non_kms_buckets.append(bucket)
 
         results["ENS-S3-01"] = {
             "status": "FAIL" if public_buckets else "PASS",
-            "details": f"{len(public_buckets)} bucket(s) sin bloqueo público completo." if public_buckets else "Todos los buckets bloquean acceso público.",
+            "details": (
+                f"{len(public_buckets)} bucket(s) sin bloqueo público completo."
+                if public_buckets
+                else "Todos los buckets bloquean acceso público (o no hay buckets)."
+            ),
             "affected_resources": public_buckets
         }
         results["ENS-S3-02"] = {
-            "status": "FAIL" if unencrypted_buckets else "PASS",
-            "details": f"{len(unencrypted_buckets)} bucket(s) sin cifrado por defecto." if unencrypted_buckets else "Todos los buckets están cifrados.",
-            "affected_resources": unencrypted_buckets
+            "status": "FAIL" if non_kms_buckets else "PASS",
+            "details": (
+                f"{len(non_kms_buckets)} bucket(s) sin cifrado gestionado con AWS KMS."
+                if non_kms_buckets
+                else "Todos los buckets S3 utilizan cifrado con AWS KMS (o no hay buckets)."
+            ),
+            "affected_resources": non_kms_buckets
         }
     except (ClientError, NoCredentialsError) as e:
         for cid in ("ENS-S3-01", "ENS-S3-02"):
@@ -92,16 +129,41 @@ def run_aws_scan(profile=None, region="eu-west-1"):
     # 2. IAM Checks (ENS-IAM-01, ENS-IAM-02, ENS-IAM-03)
     try:
         iam = session.client("iam")
-        # Root MFA
-        summary = iam.get_account_summary()["SummaryMap"]
-        root_mfa = summary.get("AccountMFAEnabled", 0) == 1
+
+        # ENS-IAM-01: MFA en Root y usuarios IAM con acceso a consola
+        missing_mfa = []
+        summary = iam.get_account_summary().get("SummaryMap", {})
+        if summary.get("AccountMFAEnabled", 0) != 1:
+            missing_mfa.append("AWS-Root-Account")
+
+        for page in iam.get_paginator("list_users").paginate():
+            for user in page.get("Users", []):
+                username = user["UserName"]
+                try:
+                    iam.get_login_profile(UserName=username)
+                    has_console_access = True
+                except ClientError as e:
+                    if e.response["Error"]["Code"] == "NoSuchEntity":
+                        has_console_access = False
+                    else:
+                        raise
+
+                if has_console_access:
+                    mfa_devices = iam.list_mfa_devices(UserName=username).get("MFADevices", [])
+                    if not mfa_devices:
+                        missing_mfa.append(f"IAM-User: {username}")
+
         results["ENS-IAM-01"] = {
-            "status": "PASS" if root_mfa else "FAIL",
-            "details": "MFA activo en Root." if root_mfa else "La cuenta Root NO tiene MFA activado.",
-            "affected_resources": [] if root_mfa else ["AWS-Root-Account"]
+            "status": "FAIL" if missing_mfa else "PASS",
+            "details": (
+                f"{len(missing_mfa)} identidad(es) con acceso a consola sin MFA activo."
+                if missing_mfa
+                else "MFA activado en la cuenta Root y en todos los usuarios IAM con acceso a consola."
+            ),
+            "affected_resources": missing_mfa
         }
 
-        # Password Policy
+        # ENS-IAM-02: Política de contraseñas
         try:
             pol = iam.get_account_password_policy()["PasswordPolicy"]
             strong = (
@@ -123,29 +185,55 @@ def run_aws_scan(profile=None, region="eu-west-1"):
                 "affected_resources": ["IAM-Password-Policy"]
             }
 
-        # Overly permissive policies (*:*) con paginación y soporte para listas
+        # ENS-IAM-03: Políticas '*:*' (locales gestionadas + inline en usuarios, grupos y roles)
         risky_policies = []
-        paginator = iam.get_paginator("list_policies")
-        for page in paginator.paginate(Scope="Local"):
+
+        # Políticas gestionadas locales
+        for page in iam.get_paginator("list_policies").paginate(Scope="Local"):
             for p in page.get("Policies", []):
                 ver = iam.get_policy_version(PolicyArn=p["Arn"], VersionId=p["DefaultVersionId"])
-                stmts = ver["PolicyVersion"]["Document"].get("Statement", [])
-                if isinstance(stmts, dict):
-                    stmts = [stmts]
-                for s in stmts:
-                    actions = s.get("Action", [])
-                    resources = s.get("Resource", [])
-                    if isinstance(actions, str):
-                        actions = [actions]
-                    if isinstance(resources, str):
-                        resources = [resources]
-                    if s.get("Effect") == "Allow" and "*" in actions and "*" in resources:
-                        risky_policies.append(p["PolicyName"])
-                        break
+                if _has_wildcard_admin(ver["PolicyVersion"]["Document"]):
+                    risky_policies.append(f"ManagedPolicy: {p['PolicyName']}")
+
+        # Políticas inline en usuarios
+        for page in iam.get_paginator("list_users").paginate():
+            for u in page.get("Users", []):
+                uname = u["UserName"]
+                for p_page in iam.get_paginator("list_user_policies").paginate(UserName=uname):
+                    for pname in p_page.get("PolicyNames", []):
+                        doc = iam.get_user_policy(UserName=uname, PolicyName=pname)["PolicyDocument"]
+                        if _has_wildcard_admin(doc):
+                            risky_policies.append(f"UserInline: {uname}/{pname}")
+
+        # Políticas inline en grupos
+        for page in iam.get_paginator("list_groups").paginate():
+            for g in page.get("Groups", []):
+                gname = g["GroupName"]
+                for p_page in iam.get_paginator("list_group_policies").paginate(GroupName=gname):
+                    for pname in p_page.get("PolicyNames", []):
+                        doc = iam.get_group_policy(GroupName=gname, PolicyName=pname)["PolicyDocument"]
+                        if _has_wildcard_admin(doc):
+                            risky_policies.append(f"GroupInline: {gname}/{pname}")
+
+        # Políticas inline en roles (excluyendo roles gestionados por AWS)
+        for page in iam.get_paginator("list_roles").paginate():
+            for r in page.get("Roles", []):
+                if r.get("Path", "").startswith("/aws-service-role/"):
+                    continue
+                rname = r["RoleName"]
+                for p_page in iam.get_paginator("list_role_policies").paginate(RoleName=rname):
+                    for pname in p_page.get("PolicyNames", []):
+                        doc = iam.get_role_policy(RoleName=rname, PolicyName=pname)["PolicyDocument"]
+                        if _has_wildcard_admin(doc):
+                            risky_policies.append(f"RoleInline: {rname}/{pname}")
 
         results["ENS-IAM-03"] = {
             "status": "FAIL" if risky_policies else "PASS",
-            "details": f"{len(risky_policies)} política(s) con permisos '*:*'." if risky_policies else "Sin políticas locales con permisos totales.",
+            "details": (
+                f"{len(risky_policies)} política(s) gestionada(s) o inline con permisos '*:*'."
+                if risky_policies
+                else "Sin políticas gestionadas ni inline con permisos totales '*:*'."
+            ),
             "affected_resources": risky_policies
         }
     except (ClientError, NoCredentialsError) as e:
