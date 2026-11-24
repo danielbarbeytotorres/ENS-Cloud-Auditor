@@ -1,0 +1,22 @@
+# Entorno virtual. Cache de Python.
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Credenciales. Variables de entorno.
+.env
+*.pem
+*.key
+.aws/
+
+# Informes locales.
+output/*.html
+output/*.csv
+output/*.json
+
+# IDE y SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
